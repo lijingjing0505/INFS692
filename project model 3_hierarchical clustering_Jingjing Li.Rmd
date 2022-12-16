@@ -1,0 +1,91 @@
+---
+title: "project model 3-Hierarchical clustering"
+author: "Jingjing Li"
+date: "2022-12-16"
+output:
+  word_document: default
+  pdf_document:
+    latex_engine: xelatex
+---
+
+I cannot knit all 3 clustering models at once, so I did them separately.
+
+For Hierarchical clustering, I cannot generate PDF from RMarkdown file. 
+I tried to troubleshoot using this website: https://yihui.org/tinytex/r/#debugging%20for%20debugging%20tip
+and other websites, such as, stack overflow.
+
+At the end, I found the issue is that there are invalid characters in the code that the 
+LaTex cannot recognize, the character is the function fviz_dend.
+
+Once I deleted the line with fviz_dend, I was able to generate PDF. However I need
+the function.
+
+At the end, I knit to Word document, then converted the Word file to PDF.
+
+Helper packages
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(stringr)     
+library(gridExtra)   
+library(cluster)     
+library(factoextra) 
+library(mclust)
+```
+
+process the data
+```{r}
+df <-read.csv("radiomics_completedata.csv")
+
+df <- na.omit(df)
+
+df<-select(df,-c(Institution, Failure.binary))
+
+set.seed(123)
+```
+
+Hierarchical clustering
+```{r}
+# Plot cluster results
+p1 <- fviz_nbclust(df, FUN = hcut, method = "wss", 
+                   k.max = 10) +
+  ggtitle("(A) Elbow method")
+p2 <- fviz_nbclust(df, FUN = hcut, method = "silhouette", 
+                   k.max = 10) +
+  ggtitle("(B) Silhouette method")
+p3 <- fviz_nbclust(df, FUN = hcut, method = "gap_stat", 
+                   k.max = 10) +
+  ggtitle("(C) Gap statistic")
+
+# Display plots side by side
+gridExtra::grid.arrange(p1, p2, p3, nrow = 1)
+
+
+d<- dist(df, method = "euclidean")
+hc5 <- hclust(d, method = "ward.D2" )
+dend_plot <- fviz_dend(hc5)#an warning
+dend_data <- attr(dend_plot, "dendrogram")
+dend_cuts <- cut(dend_data, h = 2)
+
+# Ward's method
+hc5 <- hclust(d, method = "ward.D2" )
+
+# Cut tree into 4 groups
+sub_grp <- cutree(hc5, k = 2)
+
+# Number of members in each cluster
+table(sub_grp)
+
+# Plot full dendogram
+fviz_dend(
+  hc5,
+  k = 2,
+  horiz = TRUE,
+  rect = TRUE,
+  rect_fill = TRUE,
+  rect_border = "jco",
+  k_colors = "jco",
+  cex = 0.1
+)
+```

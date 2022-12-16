@@ -1,0 +1,109 @@
+---
+title: "project model 3 model based clustering and model comparison"
+author: "Jingjing Li"
+output: 
+  pdf_document: 
+    latex_engine: xelatex
+date: '2022-12-16'
+---
+
+I have trouble plot figures on model density, uncertainty, classification
+The error message is "figure margin too large" 
+I tried the following methods:
+dev.off()
+par(mar=c(1,1,1,1))
+drag the plot area bigger
+I also tried just load a part of the dataset
+however, these method did not work
+
+Helper packages
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(stringr)     
+library(gridExtra)   
+library(cluster)     
+library(factoextra) 
+library(mclust)
+```
+
+process the data
+```{r}
+df <-read.csv("radiomics_completedata.csv")
+
+df <- na.omit(df)
+
+df<-select(df,-c(Institution, Failure.binary))
+
+set.seed(123)
+```
+
+
+model based clustering
+```{r, error=TRUE}
+mdf<- Mclust(df, G = 3) 
+a<-summary(mdf) #if print a, too many pages
+
+
+plot(mdf, what = "density")
+plot(mdf, what = "uncertainty")
+
+sort(mdf$uncertainty, decreasing = TRUE) %>% head()
+
+mdf_mc <- Mclust(df)
+
+summary(mdf_mc)
+
+legend_args <- list(x = "bottomright", ncol = 427)
+plot(mdf_mc, what = 'BIC', legendArgs = legend_args)
+plot(mdf_mc, what = 'classification')
+plot(mdf_mc, what = 'uncertainty')
+
+df_mc <- Mclust(df, 1:20)
+
+summary(df_mc)
+
+plot(df_mc, what = 'BIC', 
+     legendArgs = list(x = "bottomright", ncol = 5))
+
+probabilities <- df_mc$z 
+
+probabilities <- probabilities %>%
+  as.data.frame() %>%
+  mutate(id = row_number()) %>%
+  tidyr::gather(cluster, probability, -id)
+
+ggplot(probabilities, aes(probability)) +
+  geom_histogram() +
+  facet_wrap(~ cluster, nrow = 2)
+
+uncertainty <- data.frame(
+  id = 1:nrow(df),
+  cluster = df_mc$classification,
+  uncertainty = df_mc$uncertainty
+)
+
+cluster2 <- df %>%
+  scale() %>%
+  as.data.frame() %>%
+  mutate(cluster = df_mc$classification) %>%
+  filter(cluster == 2) %>%
+  select(-cluster)
+
+cluster2 %>%
+  tidyr::gather(product, std_count) %>%
+  group_by(product) %>%
+  summarize(avg = mean(std_count)) %>%
+  ggplot(aes(avg, reorder(product, avg))) +
+  geom_point() +
+  labs(x = "Average standardized consumption", y = NULL)
+```
+
+compare 3 models
+In K-mean cluster, the number of clusters is predefined or defined with the elbow method. 
+Since k-mean uses the mean, it is not sensitive to outliers. K-mean also requires more computational power.
+Hierarchical clustering will create hierarchy of clusters and does not require to pre-specify the number of clusters. 
+Compared to K-mean, hierarchical clustering use dendrogram, so the results can be visualized. 
+k-means and hierarchical clustering are heuristic based methods that generate clusters directly based on the data. 
+Model-based clustering automatically identifying the optimal number of clusters.

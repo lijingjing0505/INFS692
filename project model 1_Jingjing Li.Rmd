@@ -1,0 +1,168 @@
+---
+title: "project model 1"
+author: "Jingjing Li"
+output: pdf_document
+date: '2022-12-09'
+---
+
+## Helper packages
+
+```{r}
+library(ROCR)
+library(ggplot2)
+library(lattice)
+library(caret)
+library(modeldata)
+library(dplyr)      
+library(rsample)    
+library(recipes)    
+library(purrr)    
+library(tidyverse)  
+library(pROC)      
+library(rpart)      
+library(rpart.plot)  
+library(readr)
+library(vip)
+library(h2o)       
+```
+
+
+process the data
+```{r}
+df = read.csv("radiomics_completedata.csv")
+dim(df)
+
+#check for null or missing value
+any(is.na(df))
+
+#check for normality, 
+
+m1<-lm(df$Failure.binary~., data=df)
+par(mfrow=c(2,2))
+plot(m1)#look at the QQplot,it's normal distribution.
+
+#correlation of the whole data, use the numerical data set df1
+
+df1<-select(df,-c(Institution, Failure.binary))
+cor_df1<-cor(df1)
+
+###########omit missing (if there is any)#############
+#####convert binary column to factor for train model#################
+df<-na.omit(df)
+df$Failure.binary<-as.factor(df$Failure.binary)
+
+```
+
+# train te model
+
+Split the data into training (80) and testing (20). 
+Make sure we have consistent categorical levels. 
+
+```{r}
+#split data
+split = initial_split(df,prop = 0.8 ,strata = "Failure.binary")
+
+ames_train <- training(split)
+ames_test <- testing(split)
+
+# Make sure we have consistent categorical levels on training data
+blueprint <- recipe(Failure.binary ~ ., data = ames_train) %>%
+  step_other(all_nominal(), threshold = 0.005)
+
+#Make sure we have consistent categorical levels on test data
+blueprint <- recipe(Failure.binary ~ ., data = ames_test) %>%
+  step_other(all_nominal(), threshold = 0.005)
+```
+
+Convert the training & test sets to an h2o object
+```{r}
+h2o.init()
+train_h2o <- prep(blueprint, training = ames_train, retain = TRUE) %>%
+  juice() %>%
+  as.h2o()
+test_h2o <- prep(blueprint, training = ames_train) %>%
+  bake(new_data = ames_test) %>%
+  as.h2o()
+```
+
+Get response and feature names 
+```{r}
+Y <- "Failure.binary"
+X <- setdiff(names(ames_train), Y)
+```
+
+Train & cross-validate a GLM model 
+```{r}
+best_glm <- h2o.glm(
+  x = X, y = Y, training_frame = train_h2o, alpha = 0.1,
+  remove_collinear_columns = TRUE, nfolds = 10, fold_assignment = "Modulo",
+  family= c("binomial"), keep_cross_validation_predictions = TRUE, seed = 123
+)
+```
+
+Train & cross-validate a RF model 
+```{r}
+#I had adjust ntrees to a very small number, otherwise my computer crashes. 
+best_rf <- h2o.randomForest(
+  x = X, y = Y, training_frame = train_h2o, ntrees = 500, mtries = 20,
+  max_depth = 30, min_rows = 1, sample_rate = 0.8, nfolds = 10,
+  fold_assignment = "Modulo", keep_cross_validation_predictions = TRUE,
+  seed = 123, stopping_rounds = 50, score_each_iteration = T, 
+  stopping_tolerance = 0
+)
+```
+
+Train & cross-validate a GBM model
+```{r}
+#I had adjust ntrees to a very small number, otherwise my computer crashes
+best_gbm <- h2o.gbm(
+  x = X, y = Y, training_frame = train_h2o, ntrees = 500, learn_rate = 0.01,
+  max_depth = 7, min_rows = 5, sample_rate = 0.8, nfolds = 10,
+  fold_assignment = "Modulo", keep_cross_validation_predictions = TRUE,
+  seed = 123, stopping_rounds = 50, score_each_iteration = T, 
+  stopping_tolerance = 0
+)
+
+```
+
+Train a stacked ensemble using the 3 models from above
+```{r}
+base_models <- list(best_gbm,best_glm,best_rf)
+ensemble <- h2o.stackedEnsemble(x = X,
+                                y = Y,
+                                training_frame = train_h2o,
+                                base_models = base_models)
+```
+
+
+Print the AUC values during training
+```{r}
+get_auc_train <- function(model) {
+  results <- h2o.performance(model, newdata = train_h2o)
+  results@metrics$AUC
+}
+list(ensemble) %>%
+  purrr::map_dbl(get_auc_train)
+```
+
+Eval ensemble performance on a test set
+```{r}
+# Eval ensemble performance on a test set
+h2o.performance(ensemble, newdata = test_h2o)
+```
+
+Print the AUC value during testing
+```{r}
+get_auc_test <- function(model) {
+  results <- h2o.performance(model, newdata = test_h2o)
+  results@metrics$AUC
+}
+list(ensemble) %>%
+  purrr::map_dbl(get_auc_test)
+```
+
+Print top 20 important feature during training
+```{r,error=TRUE}
+#########cannot print, also tried varImp(), summary.gbm(), 
+vip(ensemble,num_features=20)
+```
